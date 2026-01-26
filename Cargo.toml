@@ -1,0 +1,22 @@
+[package]
+name = "component-map"
+version = "0.1.0"
+edition = "2024"
+authors = ["JustAStream <justastream.code@gmail.com>"]
+license = "MIT"
+documentation = "https://docs.rs/component-map"
+repository = "https://github.com/just-a-stream/component-map"
+readme = "README.md"
+description = "Generic component manager with sync/async and fallible/infallible initialisation"
+keywords = ["component", "manager", "async", "initialiation"]
+categories = ["rust-patterns", "data-structures", "asynchronous"]
+
+[dev-dependencies]
+tokio = { version = "1.49", features = ["rt", "macros"] }
+
+[dependencies]
+# Async
+futures = { version = "0.3.31" }
+
+# Util
+derive_more = { version = "2.1.1", default-features = false, features = ["constructor"]}
