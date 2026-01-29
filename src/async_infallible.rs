@@ -5,30 +5,29 @@ impl<Key, Args, Comp, FnInit> ComponentMap<Key, Args, Comp, FnInit> {
     pub async fn init_async(args: impl IntoIterator<Item = (Key, Args)>, init: FnInit) -> Self
     where
         Key: Eq + std::hash::Hash,
-        FnInit: AsyncFn(&Args) -> Comp + Clone,
+        FnInit: AsyncFn(&Key, &Args) -> Comp + Clone,
     {
         let components_fut = args.into_iter().map(|(key, args)| {
             let init = init.clone();
             async move {
-                let component = (init)(&args).await;
+                let component = (init)(&key, &args).await;
                 (key, WithArgs { component, args })
             }
         });
 
         let map = join_all(components_fut).await.into_iter().collect();
 
-        Self { map, init }
+        Self { map: map, init }
     }
 
     pub async fn reinit_all_async(&mut self) -> impl Iterator<Item = Keyed<&Key, Comp>>
     where
-        Key: Clone,
-        FnInit: AsyncFn(&Args) -> Comp + Clone,
+        FnInit: AsyncFn(&Key, &Args) -> Comp + Clone,
     {
         let next_components_fut = self
             .map
-            .values()
-            .map(|component| (self.init)(&component.args));
+            .iter()
+            .map(|(key, component)| (self.init)(key, &component.args));
 
         let next_components = join_all(next_components_fut).await;
 
@@ -47,14 +46,14 @@ impl<Key, Args, Comp, FnInit> ComponentMap<Key, Args, Comp, FnInit> {
     ) -> impl Iterator<Item = Keyed<Key, Option<Comp>>>
     where
         Key: Eq + std::hash::Hash + Clone,
-        FnInit: AsyncFn(&Args) -> Comp + Clone,
+        FnInit: AsyncFn(&Key, &Args) -> Comp + Clone,
     {
         let next_components_fut = keys.into_iter().map(|key| {
             let init = self.init.clone();
             let args = self.map.get(&key).map(|component| &component.args);
             async move {
                 let next = match args {
-                    Some(args) => Some((init)(args).await),
+                    Some(args) => Some((init)(&key, args).await),
                     None => None,
                 };
                 Keyed::new(key, next)
@@ -79,12 +78,12 @@ impl<Key, Args, Comp, FnInit> ComponentMap<Key, Args, Comp, FnInit> {
     ) -> impl Iterator<Item = Keyed<Key, Option<WithArgs<Args, Comp>>>>
     where
         Key: Clone + Eq + std::hash::Hash,
-        FnInit: AsyncFn(&Args) -> Comp + Clone,
+        FnInit: AsyncFn(&Key, &Args) -> Comp + Clone,
     {
         let updated_components_fut = updates.into_iter().map(|(key, args)| {
             let init = self.init.clone();
             async move {
-                let component = (init)(&args).await;
+                let component = (init)(&key, &args).await;
                 (key, WithArgs { component, args })
             }
         });
@@ -114,7 +113,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_init_async() {
-        let init = |args: &Args| {
+        let init = |_key: &&str, args: &Args| {
             let value = args.value;
             async move { Counter(value) }
         };
@@ -124,28 +123,22 @@ mod tests {
         )
         .await;
 
-        assert_eq!(manager.components().len(), 2);
-        assert_eq!(
-            manager.components().get("key1").unwrap().component,
-            Counter(1)
-        );
-        assert_eq!(
-            manager.components().get("key2").unwrap().component,
-            Counter(2)
-        );
-        assert_eq!(manager.components().get("key1").unwrap().args.value, 1);
+        assert_eq!(manager.map.len(), 2);
+        assert_eq!(manager.map.get("key1").unwrap().component, Counter(1));
+        assert_eq!(manager.map.get("key2").unwrap().component, Counter(2));
+        assert_eq!(manager.map.get("key1").unwrap().args.value, 1);
     }
 
     #[tokio::test]
     async fn test_init_async_empty() {
-        let init = |args: &Args| {
+        let init = |_key: &&str, args: &Args| {
             let value = args.value;
             async move { Counter(value) }
         };
         let manager: ComponentMap<&str, Args, Counter, _> =
             ComponentMap::init_async([], init).await;
 
-        assert_eq!(manager.components().len(), 0);
+        assert_eq!(manager.map.len(), 0);
     }
 
     #[tokio::test]
@@ -153,7 +146,7 @@ mod tests {
         let call_count = Arc::new(Mutex::new(0));
         let call_count_clone = call_count.clone();
 
-        let init = move |args: &Args| {
+        let init = move |_key: &&str, args: &Args| {
             let call_count = call_count_clone.clone();
             let value = args.value;
             async move {
@@ -171,14 +164,8 @@ mod tests {
         let prev_components: Vec<_> = manager.reinit_all_async().await.collect();
 
         assert_eq!(prev_components.len(), 2);
-        assert_eq!(
-            manager.components().get("key1").unwrap().component,
-            Counter(2)
-        );
-        assert_eq!(
-            manager.components().get("key2").unwrap().component,
-            Counter(4)
-        );
+        assert_eq!(manager.map.get("key1").unwrap().component, Counter(2));
+        assert_eq!(manager.map.get("key2").unwrap().component, Counter(4));
 
         // Should have called init 4 times (2 for init_async, 2 for reinit_all_async)
         assert_eq!(*call_count.lock().unwrap(), 4);
@@ -186,7 +173,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_reinit_all_async_empty() {
-        let init = |args: &Args| {
+        let init = |_key: &&str, args: &Args| {
             let value = args.value;
             async move { Counter(value) }
         };
@@ -199,7 +186,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_reinit_async_existing_key() {
-        let init = |args: &Args| {
+        let init = |_key: &&str, args: &Args| {
             let value = args.value;
             async move { Counter(value * 2) }
         };
@@ -216,19 +203,13 @@ mod tests {
         assert_eq!(results[0].key, "key1");
         assert_eq!(results[0].value, Some(Counter(2)));
 
-        assert_eq!(
-            manager.components().get("key1").unwrap().component,
-            Counter(2)
-        );
-        assert_eq!(
-            manager.components().get("key2").unwrap().component,
-            Counter(4)
-        );
+        assert_eq!(manager.map.get("key1").unwrap().component, Counter(2));
+        assert_eq!(manager.map.get("key2").unwrap().component, Counter(4));
     }
 
     #[tokio::test]
     async fn test_reinit_async_multiple_keys() {
-        let init = |args: &Args| {
+        let init = |_key: &&str, args: &Args| {
             let value = args.value;
             async move { Counter(value * 3) }
         };
@@ -246,23 +227,14 @@ mod tests {
         let results: Vec<_> = manager.reinit_async(["key1", "key3"]).await.collect();
 
         assert_eq!(results.len(), 2);
-        assert_eq!(
-            manager.components().get("key1").unwrap().component,
-            Counter(3)
-        );
-        assert_eq!(
-            manager.components().get("key2").unwrap().component,
-            Counter(6)
-        );
-        assert_eq!(
-            manager.components().get("key3").unwrap().component,
-            Counter(9)
-        );
+        assert_eq!(manager.map.get("key1").unwrap().component, Counter(3));
+        assert_eq!(manager.map.get("key2").unwrap().component, Counter(6));
+        assert_eq!(manager.map.get("key3").unwrap().component, Counter(9));
     }
 
     #[tokio::test]
     async fn test_reinit_async_nonexistent_key() {
-        let init = |args: &Args| {
+        let init = |_key: &&str, args: &Args| {
             let value = args.value;
             async move { Counter(value) }
         };
@@ -274,12 +246,12 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].key, "nonexistent");
         assert_eq!(results[0].value, None);
-        assert_eq!(manager.components().len(), 1);
+        assert_eq!(manager.map.len(), 1);
     }
 
     #[tokio::test]
     async fn test_update_async_existing() {
-        let init = |args: &Args| {
+        let init = |_key: &&str, args: &Args| {
             let value = args.value;
             async move { Counter(value) }
         };
@@ -296,16 +268,13 @@ mod tests {
         assert!(results[0].value.is_some());
         assert_eq!(results[0].value.as_ref().unwrap().component, Counter(1));
 
-        assert_eq!(
-            manager.components().get("key1").unwrap().component,
-            Counter(10)
-        );
-        assert_eq!(manager.components().get("key1").unwrap().args.value, 10);
+        assert_eq!(manager.map.get("key1").unwrap().component, Counter(10));
+        assert_eq!(manager.map.get("key1").unwrap().args.value, 10);
     }
 
     #[tokio::test]
     async fn test_update_async_new_key() {
-        let init = |args: &Args| {
+        let init = |_key: &&str, args: &Args| {
             let value = args.value;
             async move { Counter(value) }
         };
@@ -321,16 +290,13 @@ mod tests {
         assert_eq!(results[0].key, "key2");
         assert!(results[0].value.is_none());
 
-        assert_eq!(manager.components().len(), 2);
-        assert_eq!(
-            manager.components().get("key2").unwrap().component,
-            Counter(20)
-        );
+        assert_eq!(manager.map.len(), 2);
+        assert_eq!(manager.map.get("key2").unwrap().component, Counter(20));
     }
 
     #[tokio::test]
     async fn test_update_async_multiple() {
-        let init = |args: &Args| {
+        let init = |_key: &&str, args: &Args| {
             let value = args.value;
             async move { Counter(value) }
         };
@@ -347,18 +313,9 @@ mod tests {
             .collect();
 
         assert_eq!(results.len(), 3);
-        assert_eq!(manager.components().len(), 3);
-        assert_eq!(
-            manager.components().get("key1").unwrap().component,
-            Counter(10)
-        );
-        assert_eq!(
-            manager.components().get("key2").unwrap().component,
-            Counter(20)
-        );
-        assert_eq!(
-            manager.components().get("key3").unwrap().component,
-            Counter(30)
-        );
+        assert_eq!(manager.map.len(), 3);
+        assert_eq!(manager.map.get("key1").unwrap().component, Counter(10));
+        assert_eq!(manager.map.get("key2").unwrap().component, Counter(20));
+        assert_eq!(manager.map.get("key3").unwrap().component, Counter(30));
     }
 }

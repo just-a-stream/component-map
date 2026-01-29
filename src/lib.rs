@@ -20,20 +20,6 @@ pub struct WithArgs<Args, Comp> {
 
 #[derive(Debug, Constructor)]
 pub struct ComponentMap<Key, Args, Comp, FnInit> {
-    map: HashMap<Key, WithArgs<Args, Comp>>,
-    init: FnInit,
-}
-
-impl<Key, Args, Comp, FnInit> ComponentMap<Key, Args, Comp, FnInit> {
-    pub fn components(&self) -> &HashMap<Key, WithArgs<Args, Comp>> {
-        &self.map
-    }
-
-    pub fn components_mut(&mut self) -> &mut HashMap<Key, WithArgs<Args, Comp>> {
-        &mut self.map
-    }
-
-    pub fn fn_init(&self) -> &FnInit {
-        &self.init
-    }
+    pub map: HashMap<Key, WithArgs<Args, Comp>>,
+    pub init: FnInit,
 }

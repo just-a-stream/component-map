@@ -4,30 +4,25 @@ impl<Key, Args, Comp, FnInit> ComponentMap<Key, Args, Comp, FnInit> {
     pub fn init(args: impl IntoIterator<Item = (Key, Args)>, init: FnInit) -> Self
     where
         Key: Eq + std::hash::Hash,
-        FnInit: Fn(&Args) -> Comp,
+        FnInit: Fn(&Key, &Args) -> Comp,
     {
         let map = args
             .into_iter()
             .map(|(key, args)| {
-                (
-                    key,
-                    WithArgs {
-                        component: (init)(&args),
-                        args,
-                    },
-                )
+                let component = (init)(&key, &args);
+                (key, WithArgs { component, args })
             })
             .collect();
 
-        Self { map, init }
+        Self { map: map, init }
     }
 
     pub fn reinit_all(&mut self) -> impl Iterator<Item = Keyed<&Key, Comp>>
     where
-        FnInit: Fn(&Args) -> Comp,
+        FnInit: Fn(&Key, &Args) -> Comp,
     {
         self.map.iter_mut().map(|(key, component)| {
-            let next = (self.init)(&component.args);
+            let next = (self.init)(key, &component.args);
             let prev = std::mem::replace(&mut component.component, next);
             Keyed::new(key, prev)
         })
@@ -39,11 +34,11 @@ impl<Key, Args, Comp, FnInit> ComponentMap<Key, Args, Comp, FnInit> {
     ) -> impl Iterator<Item = Keyed<Key, Option<Comp>>>
     where
         Key: Eq + std::hash::Hash,
-        FnInit: Fn(&Args) -> Comp,
+        FnInit: Fn(&Key, &Args) -> Comp,
     {
         keys.into_iter().map(|key| {
             let prev = self.map.get_mut(&key).map(|component| {
-                let next = (self.init)(&component.args);
+                let next = (self.init)(&key, &component.args);
                 std::mem::replace(&mut component.component, next)
             });
 
@@ -57,13 +52,13 @@ impl<Key, Args, Comp, FnInit> ComponentMap<Key, Args, Comp, FnInit> {
     ) -> impl Iterator<Item = Keyed<Key, Option<WithArgs<Args, Comp>>>>
     where
         Key: Clone + Eq + std::hash::Hash,
-        FnInit: Fn(&Args) -> Comp,
+        FnInit: Fn(&Key, &Args) -> Comp,
     {
         updates.into_iter().map(move |(key, args)| {
             let prev = self.map.insert(
                 key.clone(),
                 WithArgs {
-                    component: (self.init)(&args),
+                    component: (self.init)(&key, &args),
                     args,
                 },
             );
@@ -88,35 +83,29 @@ mod tests {
 
     #[test]
     fn test_init() {
-        let init = |args: &Args| Counter(args.value);
+        let init = |_key: &&str, args: &Args| Counter(args.value);
         let manager = ComponentMap::init(
             [("key1", Args { value: 1 }), ("key2", Args { value: 2 })],
             init,
         );
 
-        assert_eq!(manager.components().len(), 2);
-        assert_eq!(
-            manager.components().get("key1").unwrap().component,
-            Counter(1)
-        );
-        assert_eq!(
-            manager.components().get("key2").unwrap().component,
-            Counter(2)
-        );
-        assert_eq!(manager.components().get("key1").unwrap().args.value, 1);
+        assert_eq!(manager.map.len(), 2);
+        assert_eq!(manager.map.get("key1").unwrap().component, Counter(1));
+        assert_eq!(manager.map.get("key2").unwrap().component, Counter(2));
+        assert_eq!(manager.map.get("key1").unwrap().args.value, 1);
     }
 
     #[test]
     fn test_init_empty() {
-        let init = |args: &Args| Counter(args.value);
+        let init = |_key: &&str, args: &Args| Counter(args.value);
         let manager: ComponentMap<&str, Args, Counter, _> = ComponentMap::init([], init);
 
-        assert_eq!(manager.components().len(), 0);
+        assert_eq!(manager.map.len(), 0);
     }
 
     #[test]
     fn test_init_multiple_components() {
-        let init = |args: &Args| Counter(args.value * 10);
+        let init = |_key: &&str, args: &Args| Counter(args.value * 10);
         let manager = ComponentMap::init(
             [
                 ("a", Args { value: 1 }),
@@ -127,15 +116,9 @@ mod tests {
             init,
         );
 
-        assert_eq!(manager.components().len(), 4);
-        assert_eq!(
-            manager.components().get("a").unwrap().component,
-            Counter(10)
-        );
-        assert_eq!(
-            manager.components().get("d").unwrap().component,
-            Counter(40)
-        );
+        assert_eq!(manager.map.len(), 4);
+        assert_eq!(manager.map.get("a").unwrap().component, Counter(10));
+        assert_eq!(manager.map.get("d").unwrap().component, Counter(40));
     }
 
     #[test]
@@ -143,7 +126,7 @@ mod tests {
         let call_count = Arc::new(Mutex::new(0));
         let call_count_clone = call_count.clone();
 
-        let init = move |args: &Args| {
+        let init = move |_key: &&str, args: &Args| {
             *call_count_clone.lock().unwrap() += 1;
             Counter(args.value * 2)
         };
@@ -164,14 +147,8 @@ mod tests {
         assert!(prev_values.contains(&&4));
 
         // Components should now have doubled values (checked after prev_components is used)
-        assert_eq!(
-            manager.components().get("key1").unwrap().component,
-            Counter(2)
-        );
-        assert_eq!(
-            manager.components().get("key2").unwrap().component,
-            Counter(4)
-        );
+        assert_eq!(manager.map.get("key1").unwrap().component, Counter(2));
+        assert_eq!(manager.map.get("key2").unwrap().component, Counter(4));
 
         // Should have called init 4 times (2 for init, 2 for reinit_all)
         assert_eq!(*call_count.lock().unwrap(), 4);
@@ -179,7 +156,7 @@ mod tests {
 
     #[test]
     fn test_reinit_all_empty() {
-        let init = |args: &Args| Counter(args.value);
+        let init = |_key: &&str, args: &Args| Counter(args.value);
         let mut manager: ComponentMap<&str, Args, Counter, _> = ComponentMap::init([], init);
 
         let results: Vec<_> = manager.reinit_all().collect();
@@ -188,7 +165,7 @@ mod tests {
 
     #[test]
     fn test_reinit_existing_key() {
-        let init = |args: &Args| Counter(args.value * 2);
+        let init = |_key: &&str, args: &Args| Counter(args.value * 2);
 
         let mut manager = ComponentMap::init(
             [("key1", Args { value: 1 }), ("key2", Args { value: 2 })],
@@ -202,20 +179,14 @@ mod tests {
         assert_eq!(results[0].value, Some(Counter(2)));
 
         // key1 should be reinitialized (still 2 since args are still 1)
-        assert_eq!(
-            manager.components().get("key1").unwrap().component,
-            Counter(2)
-        );
+        assert_eq!(manager.map.get("key1").unwrap().component, Counter(2));
         // key2 should be unchanged
-        assert_eq!(
-            manager.components().get("key2").unwrap().component,
-            Counter(4)
-        );
+        assert_eq!(manager.map.get("key2").unwrap().component, Counter(4));
     }
 
     #[test]
     fn test_reinit_multiple_keys() {
-        let init = |args: &Args| Counter(args.value * 3);
+        let init = |_key: &&str, args: &Args| Counter(args.value * 3);
 
         let mut manager = ComponentMap::init(
             [
@@ -229,23 +200,14 @@ mod tests {
         let results: Vec<_> = manager.reinit(["key1", "key3"]).collect();
 
         assert_eq!(results.len(), 2);
-        assert_eq!(
-            manager.components().get("key1").unwrap().component,
-            Counter(3)
-        );
-        assert_eq!(
-            manager.components().get("key2").unwrap().component,
-            Counter(6)
-        );
-        assert_eq!(
-            manager.components().get("key3").unwrap().component,
-            Counter(9)
-        );
+        assert_eq!(manager.map.get("key1").unwrap().component, Counter(3));
+        assert_eq!(manager.map.get("key2").unwrap().component, Counter(6));
+        assert_eq!(manager.map.get("key3").unwrap().component, Counter(9));
     }
 
     #[test]
     fn test_reinit_nonexistent_key() {
-        let init = |args: &Args| Counter(args.value);
+        let init = |_key: &&str, args: &Args| Counter(args.value);
 
         let mut manager = ComponentMap::init([("key1", Args { value: 1 })], init);
 
@@ -256,12 +218,12 @@ mod tests {
         assert_eq!(results[0].value, None);
 
         // Original component should be unchanged
-        assert_eq!(manager.components().len(), 1);
+        assert_eq!(manager.map.len(), 1);
     }
 
     #[test]
     fn test_reinit_mixed_existent_and_nonexistent() {
-        let init = |args: &Args| Counter(args.value);
+        let init = |_key: &&str, args: &Args| Counter(args.value);
 
         let mut manager = ComponentMap::init([("key1", Args { value: 1 })], init);
 
@@ -274,7 +236,7 @@ mod tests {
 
     #[test]
     fn test_update_existing_key() {
-        let init = |args: &Args| Counter(args.value);
+        let init = |_key: &&str, args: &Args| Counter(args.value);
 
         let mut manager = ComponentMap::init([("key1", Args { value: 1 })], init);
 
@@ -287,16 +249,13 @@ mod tests {
         assert_eq!(results[0].value.as_ref().unwrap().args.value, 1);
 
         // Component should now be updated
-        assert_eq!(
-            manager.components().get("key1").unwrap().component,
-            Counter(10)
-        );
-        assert_eq!(manager.components().get("key1").unwrap().args.value, 10);
+        assert_eq!(manager.map.get("key1").unwrap().component, Counter(10));
+        assert_eq!(manager.map.get("key1").unwrap().args.value, 10);
     }
 
     #[test]
     fn test_update_new_key() {
-        let init = |args: &Args| Counter(args.value);
+        let init = |_key: &&str, args: &Args| Counter(args.value);
 
         let mut manager = ComponentMap::init([("key1", Args { value: 1 })], init);
 
@@ -307,16 +266,13 @@ mod tests {
         assert!(results[0].value.is_none());
 
         // Should now have 2 components
-        assert_eq!(manager.components().len(), 2);
-        assert_eq!(
-            manager.components().get("key2").unwrap().component,
-            Counter(20)
-        );
+        assert_eq!(manager.map.len(), 2);
+        assert_eq!(manager.map.get("key2").unwrap().component, Counter(20));
     }
 
     #[test]
     fn test_update_multiple_keys() {
-        let init = |args: &Args| Counter(args.value);
+        let init = |_key: &&str, args: &Args| Counter(args.value);
 
         let mut manager = ComponentMap::init([("key1", Args { value: 1 })], init);
 
@@ -329,48 +285,33 @@ mod tests {
             .collect();
 
         assert_eq!(results.len(), 3);
-        assert_eq!(manager.components().len(), 3);
-        assert_eq!(
-            manager.components().get("key1").unwrap().component,
-            Counter(10)
-        );
-        assert_eq!(
-            manager.components().get("key2").unwrap().component,
-            Counter(20)
-        );
-        assert_eq!(
-            manager.components().get("key3").unwrap().component,
-            Counter(30)
-        );
+        assert_eq!(manager.map.len(), 3);
+        assert_eq!(manager.map.get("key1").unwrap().component, Counter(10));
+        assert_eq!(manager.map.get("key2").unwrap().component, Counter(20));
+        assert_eq!(manager.map.get("key3").unwrap().component, Counter(30));
     }
 
     #[test]
     fn test_components_accessors() {
-        let init = |args: &Args| Counter(args.value);
+        let init = |_key: &&str, args: &Args| Counter(args.value);
         let mut manager = ComponentMap::init([("key1", Args { value: 1 })], init);
 
         // Test immutable access
-        assert_eq!(manager.components().len(), 1);
-        assert_eq!(
-            manager.components().get("key1").unwrap().component,
-            Counter(1)
-        );
+        assert_eq!(manager.map.len(), 1);
+        assert_eq!(manager.map.get("key1").unwrap().component, Counter(1));
 
         // Test mutable access
-        manager.components_mut().get_mut("key1").unwrap().component = Counter(999);
-        assert_eq!(
-            manager.components().get("key1").unwrap().component,
-            Counter(999)
-        );
+        manager.map.get_mut("key1").unwrap().component = Counter(999);
+        assert_eq!(manager.map.get("key1").unwrap().component, Counter(999));
     }
 
     #[test]
     fn test_fn_init_accessor() {
-        let init = |args: &Args| Counter(args.value * 5);
+        let init = |_key: &&str, args: &Args| Counter(args.value * 5);
         let manager = ComponentMap::init([("key1", Args { value: 1 })], init);
 
-        let fn_init = manager.fn_init();
-        let result = (fn_init)(&Args { value: 10 });
+        let fn_init = &manager.init;
+        let result = (fn_init)(&"test", &Args { value: 10 });
         assert_eq!(result, Counter(50));
     }
 }

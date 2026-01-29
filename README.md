@@ -8,4 +8,4 @@ A generic Rust library for managing collections of components with flexible init
 
 ## License
 
-MIT OR Apache-2.0
+MIT
