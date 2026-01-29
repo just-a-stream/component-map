@@ -19,12 +19,12 @@ pub struct WithArgs<Args, Comp> {
 }
 
 #[derive(Debug, Constructor)]
-pub struct ComponentManager<Key, Args, Comp, FnInit> {
+pub struct ComponentMap<Key, Args, Comp, FnInit> {
     map: HashMap<Key, WithArgs<Args, Comp>>,
     init: FnInit,
 }
 
-impl<Key, Args, Comp, FnInit> ComponentManager<Key, Args, Comp, FnInit> {
+impl<Key, Args, Comp, FnInit> ComponentMap<Key, Args, Comp, FnInit> {
     pub fn components(&self) -> &HashMap<Key, WithArgs<Args, Comp>> {
         &self.map
     }

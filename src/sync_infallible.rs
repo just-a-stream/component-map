@@ -1,6 +1,6 @@
-use crate::{ComponentManager, Keyed, WithArgs};
+use crate::{ComponentMap, Keyed, WithArgs};
 
-impl<Key, Args, Comp, FnInit> ComponentManager<Key, Args, Comp, FnInit> {
+impl<Key, Args, Comp, FnInit> ComponentMap<Key, Args, Comp, FnInit> {
     pub fn init(args: impl IntoIterator<Item = (Key, Args)>, init: FnInit) -> Self
     where
         Key: Eq + std::hash::Hash,
@@ -89,7 +89,7 @@ mod tests {
     #[test]
     fn test_init() {
         let init = |args: &Args| Counter(args.value);
-        let manager = ComponentManager::init(
+        let manager = ComponentMap::init(
             [("key1", Args { value: 1 }), ("key2", Args { value: 2 })],
             init,
         );
@@ -109,7 +109,7 @@ mod tests {
     #[test]
     fn test_init_empty() {
         let init = |args: &Args| Counter(args.value);
-        let manager: ComponentManager<&str, Args, Counter, _> = ComponentManager::init([], init);
+        let manager: ComponentMap<&str, Args, Counter, _> = ComponentMap::init([], init);
 
         assert_eq!(manager.components().len(), 0);
     }
@@ -117,7 +117,7 @@ mod tests {
     #[test]
     fn test_init_multiple_components() {
         let init = |args: &Args| Counter(args.value * 10);
-        let manager = ComponentManager::init(
+        let manager = ComponentMap::init(
             [
                 ("a", Args { value: 1 }),
                 ("b", Args { value: 2 }),
@@ -148,7 +148,7 @@ mod tests {
             Counter(args.value * 2)
         };
 
-        let mut manager = ComponentManager::init(
+        let mut manager = ComponentMap::init(
             [("key1", Args { value: 1 }), ("key2", Args { value: 2 })],
             init,
         );
@@ -180,8 +180,7 @@ mod tests {
     #[test]
     fn test_reinit_all_empty() {
         let init = |args: &Args| Counter(args.value);
-        let mut manager: ComponentManager<&str, Args, Counter, _> =
-            ComponentManager::init([], init);
+        let mut manager: ComponentMap<&str, Args, Counter, _> = ComponentMap::init([], init);
 
         let results: Vec<_> = manager.reinit_all().collect();
         assert_eq!(results.len(), 0);
@@ -191,7 +190,7 @@ mod tests {
     fn test_reinit_existing_key() {
         let init = |args: &Args| Counter(args.value * 2);
 
-        let mut manager = ComponentManager::init(
+        let mut manager = ComponentMap::init(
             [("key1", Args { value: 1 }), ("key2", Args { value: 2 })],
             init,
         );
@@ -218,7 +217,7 @@ mod tests {
     fn test_reinit_multiple_keys() {
         let init = |args: &Args| Counter(args.value * 3);
 
-        let mut manager = ComponentManager::init(
+        let mut manager = ComponentMap::init(
             [
                 ("key1", Args { value: 1 }),
                 ("key2", Args { value: 2 }),
@@ -248,7 +247,7 @@ mod tests {
     fn test_reinit_nonexistent_key() {
         let init = |args: &Args| Counter(args.value);
 
-        let mut manager = ComponentManager::init([("key1", Args { value: 1 })], init);
+        let mut manager = ComponentMap::init([("key1", Args { value: 1 })], init);
 
         let results: Vec<_> = manager.reinit(["nonexistent"]).collect();
 
@@ -264,7 +263,7 @@ mod tests {
     fn test_reinit_mixed_existent_and_nonexistent() {
         let init = |args: &Args| Counter(args.value);
 
-        let mut manager = ComponentManager::init([("key1", Args { value: 1 })], init);
+        let mut manager = ComponentMap::init([("key1", Args { value: 1 })], init);
 
         let results: Vec<_> = manager.reinit(["key1", "nonexistent"]).collect();
 
@@ -277,7 +276,7 @@ mod tests {
     fn test_update_existing_key() {
         let init = |args: &Args| Counter(args.value);
 
-        let mut manager = ComponentManager::init([("key1", Args { value: 1 })], init);
+        let mut manager = ComponentMap::init([("key1", Args { value: 1 })], init);
 
         let results: Vec<_> = manager.update([("key1", Args { value: 10 })]).collect();
 
@@ -299,7 +298,7 @@ mod tests {
     fn test_update_new_key() {
         let init = |args: &Args| Counter(args.value);
 
-        let mut manager = ComponentManager::init([("key1", Args { value: 1 })], init);
+        let mut manager = ComponentMap::init([("key1", Args { value: 1 })], init);
 
         let results: Vec<_> = manager.update([("key2", Args { value: 20 })]).collect();
 
@@ -319,7 +318,7 @@ mod tests {
     fn test_update_multiple_keys() {
         let init = |args: &Args| Counter(args.value);
 
-        let mut manager = ComponentManager::init([("key1", Args { value: 1 })], init);
+        let mut manager = ComponentMap::init([("key1", Args { value: 1 })], init);
 
         let results: Vec<_> = manager
             .update([
@@ -348,7 +347,7 @@ mod tests {
     #[test]
     fn test_components_accessors() {
         let init = |args: &Args| Counter(args.value);
-        let mut manager = ComponentManager::init([("key1", Args { value: 1 })], init);
+        let mut manager = ComponentMap::init([("key1", Args { value: 1 })], init);
 
         // Test immutable access
         assert_eq!(manager.components().len(), 1);
@@ -368,7 +367,7 @@ mod tests {
     #[test]
     fn test_fn_init_accessor() {
         let init = |args: &Args| Counter(args.value * 5);
-        let manager = ComponentManager::init([("key1", Args { value: 1 })], init);
+        let manager = ComponentMap::init([("key1", Args { value: 1 })], init);
 
         let fn_init = manager.fn_init();
         let result = (fn_init)(&Args { value: 10 });

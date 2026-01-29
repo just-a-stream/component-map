@@ -1,6 +1,6 @@
-use crate::{ComponentManager, Keyed, WithArgs};
+use crate::{ComponentMap, Keyed, WithArgs};
 
-impl<Key, Args, Comp, FnInit> ComponentManager<Key, Args, Comp, FnInit> {
+impl<Key, Args, Comp, FnInit> ComponentMap<Key, Args, Comp, FnInit> {
     pub fn try_init<Error>(
         args: impl IntoIterator<Item = (Key, Args)>,
         init: FnInit,
@@ -96,7 +96,7 @@ mod tests {
             }
         };
 
-        let result = ComponentManager::try_init(
+        let result = ComponentMap::try_init(
             [
                 (
                     "key1",
@@ -139,7 +139,7 @@ mod tests {
             }
         };
 
-        let result = ComponentManager::try_init(
+        let result = ComponentMap::try_init(
             [
                 (
                     "key1",
@@ -173,8 +173,8 @@ mod tests {
             }
         };
 
-        let result: Result<ComponentManager<&str, FailArgs, Counter, _>, TestError> =
-            ComponentManager::try_init([], init);
+        let result: Result<ComponentMap<&str, FailArgs, Counter, _>, TestError> =
+            ComponentMap::try_init([], init);
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap().components().len(), 0);
@@ -190,7 +190,7 @@ mod tests {
             }
         };
 
-        let result = ComponentManager::try_init(
+        let result = ComponentMap::try_init(
             [
                 (
                     "key1",
@@ -223,7 +223,7 @@ mod tests {
             }
         };
 
-        let mut manager = ComponentManager::try_init(
+        let mut manager = ComponentMap::try_init(
             [
                 (
                     "key1",
@@ -277,7 +277,7 @@ mod tests {
             }
         };
 
-        let mut manager = ComponentManager::try_init(
+        let mut manager = ComponentMap::try_init(
             [
                 (
                     "key1",
@@ -317,7 +317,7 @@ mod tests {
             }
         };
 
-        let mut manager = ComponentManager::try_init(
+        let mut manager = ComponentMap::try_init(
             [(
                 "key1",
                 FailArgs {
@@ -357,7 +357,7 @@ mod tests {
             }
         };
 
-        let mut manager = ComponentManager::try_init(
+        let mut manager = ComponentMap::try_init(
             [
                 (
                     "key1",
@@ -403,7 +403,7 @@ mod tests {
             }
         };
 
-        let mut manager = ComponentManager::try_init(
+        let mut manager = ComponentMap::try_init(
             [(
                 "key1",
                 FailArgs {
@@ -432,7 +432,7 @@ mod tests {
             }
         };
 
-        let mut manager = ComponentManager::try_init(
+        let mut manager = ComponentMap::try_init(
             [(
                 "key1",
                 FailArgs {
@@ -468,7 +468,7 @@ mod tests {
             }
         };
 
-        let mut manager = ComponentManager::try_init(
+        let mut manager = ComponentMap::try_init(
             [(
                 "key1",
                 FailArgs {
@@ -509,7 +509,7 @@ mod tests {
             }
         };
 
-        let mut manager = ComponentManager::try_init(
+        let mut manager = ComponentMap::try_init(
             [(
                 "key1",
                 FailArgs {
@@ -552,7 +552,7 @@ mod tests {
             }
         };
 
-        let mut manager = ComponentManager::try_init(
+        let mut manager = ComponentMap::try_init(
             [(
                 "key1",
                 FailArgs {
@@ -593,7 +593,7 @@ mod tests {
             }
         };
 
-        let mut manager = ComponentManager::try_init(
+        let mut manager = ComponentMap::try_init(
             [(
                 "key1",
                 FailArgs {

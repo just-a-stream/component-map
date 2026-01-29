@@ -1,7 +1,7 @@
-use crate::{ComponentManager, Keyed, WithArgs};
+use crate::{ComponentMap, Keyed, WithArgs};
 use futures::future::join_all;
 
-impl<Key, Args, Comp, FnInit> ComponentManager<Key, Args, Comp, FnInit> {
+impl<Key, Args, Comp, FnInit> ComponentMap<Key, Args, Comp, FnInit> {
     pub async fn init_async(args: impl IntoIterator<Item = (Key, Args)>, init: FnInit) -> Self
     where
         Key: Eq + std::hash::Hash,
@@ -118,7 +118,7 @@ mod tests {
             let value = args.value;
             async move { Counter(value) }
         };
-        let manager = ComponentManager::init_async(
+        let manager = ComponentMap::init_async(
             [("key1", Args { value: 1 }), ("key2", Args { value: 2 })],
             init,
         )
@@ -142,8 +142,8 @@ mod tests {
             let value = args.value;
             async move { Counter(value) }
         };
-        let manager: ComponentManager<&str, Args, Counter, _> =
-            ComponentManager::init_async([], init).await;
+        let manager: ComponentMap<&str, Args, Counter, _> =
+            ComponentMap::init_async([], init).await;
 
         assert_eq!(manager.components().len(), 0);
     }
@@ -162,7 +162,7 @@ mod tests {
             }
         };
 
-        let mut manager = ComponentManager::init_async(
+        let mut manager = ComponentMap::init_async(
             [("key1", Args { value: 1 }), ("key2", Args { value: 2 })],
             init,
         )
@@ -190,8 +190,8 @@ mod tests {
             let value = args.value;
             async move { Counter(value) }
         };
-        let mut manager: ComponentManager<&str, Args, Counter, _> =
-            ComponentManager::init_async([], init).await;
+        let mut manager: ComponentMap<&str, Args, Counter, _> =
+            ComponentMap::init_async([], init).await;
 
         let results: Vec<_> = manager.reinit_all_async().await.collect();
         assert_eq!(results.len(), 0);
@@ -204,7 +204,7 @@ mod tests {
             async move { Counter(value * 2) }
         };
 
-        let mut manager = ComponentManager::init_async(
+        let mut manager = ComponentMap::init_async(
             [("key1", Args { value: 1 }), ("key2", Args { value: 2 })],
             init,
         )
@@ -233,7 +233,7 @@ mod tests {
             async move { Counter(value * 3) }
         };
 
-        let mut manager = ComponentManager::init_async(
+        let mut manager = ComponentMap::init_async(
             [
                 ("key1", Args { value: 1 }),
                 ("key2", Args { value: 2 }),
@@ -267,7 +267,7 @@ mod tests {
             async move { Counter(value) }
         };
 
-        let mut manager = ComponentManager::init_async([("key1", Args { value: 1 })], init).await;
+        let mut manager = ComponentMap::init_async([("key1", Args { value: 1 })], init).await;
 
         let results: Vec<_> = manager.reinit_async(["nonexistent"]).await.collect();
 
@@ -284,7 +284,7 @@ mod tests {
             async move { Counter(value) }
         };
 
-        let mut manager = ComponentManager::init_async([("key1", Args { value: 1 })], init).await;
+        let mut manager = ComponentMap::init_async([("key1", Args { value: 1 })], init).await;
 
         let results: Vec<_> = manager
             .update_async([("key1", Args { value: 10 })])
@@ -310,7 +310,7 @@ mod tests {
             async move { Counter(value) }
         };
 
-        let mut manager = ComponentManager::init_async([("key1", Args { value: 1 })], init).await;
+        let mut manager = ComponentMap::init_async([("key1", Args { value: 1 })], init).await;
 
         let results: Vec<_> = manager
             .update_async([("key2", Args { value: 20 })])
@@ -335,7 +335,7 @@ mod tests {
             async move { Counter(value) }
         };
 
-        let mut manager = ComponentManager::init_async([("key1", Args { value: 1 })], init).await;
+        let mut manager = ComponentMap::init_async([("key1", Args { value: 1 })], init).await;
 
         let results: Vec<_> = manager
             .update_async([

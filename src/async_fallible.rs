@@ -1,7 +1,7 @@
-use crate::{ComponentManager, Keyed, WithArgs};
+use crate::{ComponentMap, Keyed, WithArgs};
 use futures::future::join_all;
 
-impl<Key, Args, Comp, FnInit> ComponentManager<Key, Args, Comp, FnInit> {
+impl<Key, Args, Comp, FnInit> ComponentMap<Key, Args, Comp, FnInit> {
     pub async fn try_init_async<Error>(
         args: impl IntoIterator<Item = (Key, Args)>,
         init: FnInit,
@@ -153,7 +153,7 @@ mod tests {
             }
         };
 
-        let result = ComponentManager::try_init_async(
+        let result = ComponentMap::try_init_async(
             [
                 (
                     "key1",
@@ -201,7 +201,7 @@ mod tests {
             }
         };
 
-        let result = ComponentManager::try_init_async(
+        let result = ComponentMap::try_init_async(
             [
                 (
                     "key1",
@@ -240,8 +240,8 @@ mod tests {
             }
         };
 
-        let result: Result<ComponentManager<&str, FailArgs, Counter, _>, TestError> =
-            ComponentManager::try_init_async([], init).await;
+        let result: Result<ComponentMap<&str, FailArgs, Counter, _>, TestError> =
+            ComponentMap::try_init_async([], init).await;
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap().components().len(), 0);
@@ -261,7 +261,7 @@ mod tests {
             }
         };
 
-        let mut manager = ComponentManager::try_init_async(
+        let mut manager = ComponentMap::try_init_async(
             [
                 (
                     "key1",
@@ -319,7 +319,7 @@ mod tests {
             }
         };
 
-        let mut manager = ComponentManager::try_init_async(
+        let mut manager = ComponentMap::try_init_async(
             [
                 (
                     "key1",
@@ -364,8 +364,8 @@ mod tests {
             }
         };
 
-        let mut manager: ComponentManager<&str, FailArgs, Counter, _> =
-            ComponentManager::try_init_async([], init).await.unwrap();
+        let mut manager: ComponentMap<&str, FailArgs, Counter, _> =
+            ComponentMap::try_init_async([], init).await.unwrap();
 
         let results: Vec<_> = manager.try_reinit_all_async().await.collect();
         assert_eq!(results.len(), 0);
@@ -385,7 +385,7 @@ mod tests {
             }
         };
 
-        let mut manager = ComponentManager::try_init_async(
+        let mut manager = ComponentMap::try_init_async(
             [
                 (
                     "key1",
@@ -435,7 +435,7 @@ mod tests {
             }
         };
 
-        let mut manager = ComponentManager::try_init_async(
+        let mut manager = ComponentMap::try_init_async(
             [(
                 "key1",
                 FailArgs {
@@ -469,7 +469,7 @@ mod tests {
             }
         };
 
-        let mut manager = ComponentManager::try_init_async(
+        let mut manager = ComponentMap::try_init_async(
             [(
                 "key1",
                 FailArgs {
@@ -516,7 +516,7 @@ mod tests {
             }
         };
 
-        let mut manager = ComponentManager::try_init_async(
+        let mut manager = ComponentMap::try_init_async(
             [(
                 "key1",
                 FailArgs {
@@ -563,7 +563,7 @@ mod tests {
             }
         };
 
-        let mut manager = ComponentManager::try_init_async(
+        let mut manager = ComponentMap::try_init_async(
             [(
                 "key1",
                 FailArgs {
