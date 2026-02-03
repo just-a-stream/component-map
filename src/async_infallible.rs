@@ -2,12 +2,12 @@ use crate::{ComponentMap, Keyed, WithArgs};
 use futures::future::join_all;
 
 impl<Key, Args, Comp, FnInit> ComponentMap<Key, Args, Comp, FnInit> {
-    pub async fn init_async(args: impl IntoIterator<Item = (Key, Args)>, init: FnInit) -> Self
+    pub async fn init_async(entries: impl IntoIterator<Item = (Key, Args)>, init: FnInit) -> Self
     where
         Key: Eq + std::hash::Hash,
         FnInit: AsyncFn(&Key, &Args) -> Comp + Clone,
     {
-        let components_fut = args.into_iter().map(|(key, args)| {
+        let components_fut = entries.into_iter().map(|(key, args)| {
             let init = init.clone();
             async move {
                 let component = (init)(&key, &args).await;

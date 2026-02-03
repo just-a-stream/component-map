@@ -2,14 +2,14 @@ use crate::{ComponentMap, Keyed, WithArgs};
 
 impl<Key, Args, Comp, FnInit> ComponentMap<Key, Args, Comp, FnInit> {
     pub fn try_init<Error>(
-        args: impl IntoIterator<Item = (Key, Args)>,
+        entries: impl IntoIterator<Item = (Key, Args)>,
         init: FnInit,
     ) -> Result<Self, Error>
     where
         Key: Eq + std::hash::Hash,
         FnInit: Fn(&Key, &Args) -> Result<Comp, Error>,
     {
-        let map = args
+        let map = entries
             .into_iter()
             .map(|(key, args)| {
                 let component = (init)(&key, &args)?;
