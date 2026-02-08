@@ -8,8 +8,8 @@ mod sync_infallible;
 
 #[derive(Debug, Constructor)]
 pub struct Keyed<Key, Value> {
-    key: Key,
-    value: Value,
+    pub key: Key,
+    pub value: Value,
 }
 
 #[derive(Debug, Constructor)]
