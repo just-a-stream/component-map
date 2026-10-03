@@ -26,12 +26,18 @@ impl<Key, Args, Comp, FnInit> ComponentMap<Key, Args, Comp, FnInit> {
     where
         FnInit: Fn(&Key, &Args) -> Result<Comp, Error>,
     {
-        self.map.iter_mut().map(|(key, component)| {
-            let result = (self.init)(key, &component.args)
-                .map(|next| std::mem::replace(&mut component.component, next));
+        let applied: Vec<_> = self
+            .map
+            .iter_mut()
+            .map(|(key, component)| {
+                let result = (self.init)(key, &component.args)
+                    .map(|next| std::mem::replace(&mut component.component, next));
 
-            Keyed::new(key, result)
-        })
+                Keyed::new(key, result)
+            })
+            .collect();
+
+        applied.into_iter()
     }
 
     pub fn try_reinit<Error>(
@@ -42,14 +48,19 @@ impl<Key, Args, Comp, FnInit> ComponentMap<Key, Args, Comp, FnInit> {
         Key: Eq + std::hash::Hash,
         FnInit: Fn(&Key, &Args) -> Result<Comp, Error>,
     {
-        keys.into_iter().map(|key| {
-            let prev = self.map.get_mut(&key).map(|component| {
-                (self.init)(&key, &component.args)
-                    .map(|next| std::mem::replace(&mut component.component, next))
-            });
+        let applied: Vec<_> = keys
+            .into_iter()
+            .map(|key| {
+                let prev = self.map.get_mut(&key).map(|component| {
+                    (self.init)(&key, &component.args)
+                        .map(|next| std::mem::replace(&mut component.component, next))
+                });
 
-            Keyed::new(key, prev)
-        })
+                Keyed::new(key, prev)
+            })
+            .collect();
+
+        applied.into_iter()
     }
 
     #[allow(clippy::type_complexity)]
@@ -61,12 +72,17 @@ impl<Key, Args, Comp, FnInit> ComponentMap<Key, Args, Comp, FnInit> {
         Key: Clone + Eq + std::hash::Hash,
         FnInit: Fn(&Key, &Args) -> Result<Comp, Error>,
     {
-        updates.into_iter().map(move |(key, args)| {
-            let result = (self.init)(&key, &args)
-                .map(|component| self.map.insert(key.clone(), WithArgs { component, args }));
+        let applied: Vec<_> = updates
+            .into_iter()
+            .map(|(key, args)| {
+                let result = (self.init)(&key, &args)
+                    .map(|component| self.map.insert(key.clone(), WithArgs { component, args }));
 
-            Keyed::new(key, result.transpose())
-        })
+                Keyed::new(key, result.transpose())
+            })
+            .collect();
+
+        applied.into_iter()
     }
 }
 
@@ -602,5 +618,59 @@ mod tests {
         assert!(manager.map.contains_key("key2"));
         assert!(!manager.map.contains_key("key3"));
         assert!(manager.map.contains_key("key4"));
+    }
+
+    #[test]
+    fn test_try_reinit_all_applies_without_consuming_results() {
+        let calls = std::cell::Cell::new(0);
+        let init = |_key: &&str, _args: &FailArgs| -> Result<Counter, TestError> {
+            calls.set(calls.get() + 1);
+            Ok(Counter(calls.get()))
+        };
+        let args = |value| FailArgs {
+            value,
+            should_fail: false,
+        };
+        let mut manager =
+            ComponentMap::try_init([("key1", args(1)), ("key2", args(2))], init).unwrap();
+
+        let _ = manager.try_reinit_all();
+
+        assert!(manager.map.values().all(|entry| entry.component.0 > 2));
+    }
+
+    #[test]
+    fn test_try_reinit_applies_without_consuming_results() {
+        let calls = std::cell::Cell::new(0);
+        let init = |_key: &&str, _args: &FailArgs| -> Result<Counter, TestError> {
+            calls.set(calls.get() + 1);
+            Ok(Counter(calls.get()))
+        };
+        let args = FailArgs {
+            value: 1,
+            should_fail: false,
+        };
+        let mut manager = ComponentMap::try_init([("key1", args)], init).unwrap();
+
+        let _ = manager.try_reinit(["key1"]);
+
+        assert_eq!(manager.map.get("key1").unwrap().component, Counter(2));
+    }
+
+    #[test]
+    fn test_try_update_applies_without_consuming_results() {
+        let init = |_key: &&str, args: &FailArgs| -> Result<Counter, TestError> {
+            Ok(Counter(args.value))
+        };
+        let args = |value| FailArgs {
+            value,
+            should_fail: false,
+        };
+        let mut manager = ComponentMap::try_init([("key1", args(1))], init).unwrap();
+
+        let _ = manager.try_update([("key1", args(10)), ("key2", args(20))]);
+
+        assert_eq!(manager.map.get("key1").unwrap().component, Counter(10));
+        assert_eq!(manager.map.get("key2").unwrap().component, Counter(20));
     }
 }

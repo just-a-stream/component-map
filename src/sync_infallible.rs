@@ -21,11 +21,17 @@ impl<Key, Args, Comp, FnInit> ComponentMap<Key, Args, Comp, FnInit> {
     where
         FnInit: Fn(&Key, &Args) -> Comp,
     {
-        self.map.iter_mut().map(|(key, component)| {
-            let next = (self.init)(key, &component.args);
-            let prev = std::mem::replace(&mut component.component, next);
-            Keyed::new(key, prev)
-        })
+        let applied: Vec<_> = self
+            .map
+            .iter_mut()
+            .map(|(key, component)| {
+                let next = (self.init)(key, &component.args);
+                let prev = std::mem::replace(&mut component.component, next);
+                Keyed::new(key, prev)
+            })
+            .collect();
+
+        applied.into_iter()
     }
 
     pub fn reinit(
@@ -36,14 +42,19 @@ impl<Key, Args, Comp, FnInit> ComponentMap<Key, Args, Comp, FnInit> {
         Key: Eq + std::hash::Hash,
         FnInit: Fn(&Key, &Args) -> Comp,
     {
-        keys.into_iter().map(|key| {
-            let prev = self.map.get_mut(&key).map(|component| {
-                let next = (self.init)(&key, &component.args);
-                std::mem::replace(&mut component.component, next)
-            });
+        let applied: Vec<_> = keys
+            .into_iter()
+            .map(|key| {
+                let prev = self.map.get_mut(&key).map(|component| {
+                    let next = (self.init)(&key, &component.args);
+                    std::mem::replace(&mut component.component, next)
+                });
 
-            Keyed::new(key, prev)
-        })
+                Keyed::new(key, prev)
+            })
+            .collect();
+
+        applied.into_iter()
     }
 
     pub fn update(
@@ -54,17 +65,22 @@ impl<Key, Args, Comp, FnInit> ComponentMap<Key, Args, Comp, FnInit> {
         Key: Clone + Eq + std::hash::Hash,
         FnInit: Fn(&Key, &Args) -> Comp,
     {
-        updates.into_iter().map(move |(key, args)| {
-            let prev = self.map.insert(
-                key.clone(),
-                WithArgs {
-                    component: (self.init)(&key, &args),
-                    args,
-                },
-            );
+        let applied: Vec<_> = updates
+            .into_iter()
+            .map(|(key, args)| {
+                let prev = self.map.insert(
+                    key.clone(),
+                    WithArgs {
+                        component: (self.init)(&key, &args),
+                        args,
+                    },
+                );
 
-            Keyed::new(key, prev)
-        })
+                Keyed::new(key, prev)
+            })
+            .collect();
+
+        applied.into_iter()
     }
 }
 
@@ -313,5 +329,47 @@ mod tests {
         let fn_init = &manager.init;
         let result = (fn_init)(&"test", &Args { value: 10 });
         assert_eq!(result, Counter(50));
+    }
+
+    #[test]
+    fn test_reinit_all_applies_without_consuming_results() {
+        let calls = std::cell::Cell::new(0);
+        let init = |_key: &&str, _args: &Args| {
+            calls.set(calls.get() + 1);
+            Counter(calls.get())
+        };
+        let mut manager = ComponentMap::init(
+            [("key1", Args { value: 1 }), ("key2", Args { value: 2 })],
+            init,
+        );
+
+        let _ = manager.reinit_all();
+
+        assert!(manager.map.values().all(|entry| entry.component.0 > 2));
+    }
+
+    #[test]
+    fn test_reinit_applies_without_consuming_results() {
+        let calls = std::cell::Cell::new(0);
+        let init = |_key: &&str, _args: &Args| {
+            calls.set(calls.get() + 1);
+            Counter(calls.get())
+        };
+        let mut manager = ComponentMap::init([("key1", Args { value: 1 })], init);
+
+        let _ = manager.reinit(["key1"]);
+
+        assert_eq!(manager.map.get("key1").unwrap().component, Counter(2));
+    }
+
+    #[test]
+    fn test_update_applies_without_consuming_results() {
+        let init = |_key: &&str, args: &Args| Counter(args.value);
+        let mut manager = ComponentMap::init([("key1", Args { value: 1 })], init);
+
+        let _ = manager.update([("key1", Args { value: 10 }), ("key2", Args { value: 20 })]);
+
+        assert_eq!(manager.map.get("key1").unwrap().component, Counter(10));
+        assert_eq!(manager.map.get("key2").unwrap().component, Counter(20));
     }
 }
