@@ -31,13 +31,18 @@ impl<Key, Args, Comp, FnInit> ComponentMap<Key, Args, Comp, FnInit> {
 
         let next_components = join_all(next_components_fut).await;
 
-        self.map
+        // iter_mut visits entries in the order iter did: the map is unchanged in between
+        let applied: Vec<_> = self
+            .map
             .iter_mut()
             .zip(next_components)
             .map(|((key, prev), next)| {
                 let prev = std::mem::replace(&mut prev.component, next);
                 Keyed::new(key, prev)
             })
+            .collect();
+
+        applied.into_iter()
     }
 
     pub async fn reinit_async(
@@ -62,14 +67,19 @@ impl<Key, Args, Comp, FnInit> ComponentMap<Key, Args, Comp, FnInit> {
 
         let results = join_all(next_components_fut).await;
 
-        results.into_iter().map(|Keyed { key, value: next }| {
-            let prev = next.and_then(|next| {
-                self.map
-                    .get_mut(&key)
-                    .map(|component| std::mem::replace(&mut component.component, next))
-            });
-            Keyed::new(key, prev)
-        })
+        let applied: Vec<_> = results
+            .into_iter()
+            .map(|Keyed { key, value: next }| {
+                let prev = next.and_then(|next| {
+                    self.map
+                        .get_mut(&key)
+                        .map(|component| std::mem::replace(&mut component.component, next))
+                });
+                Keyed::new(key, prev)
+            })
+            .collect();
+
+        applied.into_iter()
     }
 
     pub async fn update_async(
@@ -88,13 +98,16 @@ impl<Key, Args, Comp, FnInit> ComponentMap<Key, Args, Comp, FnInit> {
             }
         });
 
-        join_all(updated_components_fut)
+        let applied: Vec<_> = join_all(updated_components_fut)
             .await
             .into_iter()
             .map(|(key, component)| {
                 let prev = self.map.insert(key.clone(), component);
                 Keyed::new(key, prev)
             })
+            .collect();
+
+        applied.into_iter()
     }
 }
 
@@ -338,5 +351,55 @@ mod tests {
             .for_each(drop);
 
         assert_eq!(manager.map.get("key1").unwrap().component, Counter(2));
+    }
+
+    #[tokio::test]
+    async fn test_reinit_all_async_applies_without_consuming_results() {
+        let calls = std::cell::Cell::new(0);
+        let init = |_key: &&str, _args: &Args| {
+            calls.set(calls.get() + 1);
+            let call = calls.get();
+            async move { Counter(call) }
+        };
+        let mut manager = ComponentMap::init_async(
+            [("key1", Args { value: 1 }), ("key2", Args { value: 2 })],
+            init,
+        )
+        .await;
+
+        let _ = manager.reinit_all_async().await;
+
+        assert!(manager.map.values().all(|entry| entry.component.0 > 2));
+    }
+
+    #[tokio::test]
+    async fn test_reinit_async_applies_without_consuming_results() {
+        let calls = std::cell::Cell::new(0);
+        let init = |_key: &&str, _args: &Args| {
+            calls.set(calls.get() + 1);
+            let call = calls.get();
+            async move { Counter(call) }
+        };
+        let mut manager = ComponentMap::init_async([("key1", Args { value: 1 })], init).await;
+
+        let _ = manager.reinit_async(["key1"]).await;
+
+        assert_eq!(manager.map.get("key1").unwrap().component, Counter(2));
+    }
+
+    #[tokio::test]
+    async fn test_update_async_applies_without_consuming_results() {
+        let init = |_key: &&str, args: &Args| {
+            let value = args.value;
+            async move { Counter(value) }
+        };
+        let mut manager = ComponentMap::init_async([("key1", Args { value: 1 })], init).await;
+
+        let _ = manager
+            .update_async([("key1", Args { value: 10 }), ("key2", Args { value: 20 })])
+            .await;
+
+        assert_eq!(manager.map.get("key1").unwrap().component, Counter(10));
+        assert_eq!(manager.map.get("key2").unwrap().component, Counter(20));
     }
 }
