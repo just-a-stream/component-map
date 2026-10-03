@@ -78,18 +78,15 @@ impl<Key, Args, Comp, FnInit> ComponentMap<Key, Args, Comp, FnInit> {
         let results = join_all(next_components_fut).await;
 
         results.into_iter().map(|Keyed { key, value: result }| {
-            let prev = result
-                .map(|result| {
-                    result.map(|next| {
-                        self.map
-                            .get_mut(&key)
-                            .map(|component| std::mem::replace(&mut component.component, next))
-                    })
-                })
-                .transpose()
-                .map(Option::flatten);
+            let prev = result.and_then(|result| match result {
+                Ok(next) => self
+                    .map
+                    .get_mut(&key)
+                    .map(|component| Ok(std::mem::replace(&mut component.component, next))),
+                Err(error) => Some(Err(error)),
+            });
 
-            Keyed::new(key, prev.transpose())
+            Keyed::new(key, prev)
         })
     }
 
