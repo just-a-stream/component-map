@@ -5,10 +5,10 @@ impl<Key, Args, Comp, FnInit> ComponentMap<Key, Args, Comp, FnInit> {
     pub async fn init_async(entries: impl IntoIterator<Item = (Key, Args)>, init: FnInit) -> Self
     where
         Key: Eq + std::hash::Hash,
-        FnInit: AsyncFn(&Key, &Args) -> Comp + Clone,
+        FnInit: AsyncFn(&Key, &Args) -> Comp,
     {
         let components_fut = entries.into_iter().map(|(key, args)| {
-            let init = init.clone();
+            let init = &init;
             async move {
                 let component = (init)(&key, &args).await;
                 (key, WithArgs { component, args })
@@ -22,7 +22,7 @@ impl<Key, Args, Comp, FnInit> ComponentMap<Key, Args, Comp, FnInit> {
 
     pub async fn reinit_all_async(&mut self) -> impl Iterator<Item = Keyed<&Key, Comp>>
     where
-        FnInit: AsyncFn(&Key, &Args) -> Comp + Clone,
+        FnInit: AsyncFn(&Key, &Args) -> Comp,
     {
         let next_components_fut = self
             .map
@@ -45,11 +45,11 @@ impl<Key, Args, Comp, FnInit> ComponentMap<Key, Args, Comp, FnInit> {
         keys: impl IntoIterator<Item = Key>,
     ) -> impl Iterator<Item = Keyed<Key, Option<Comp>>>
     where
-        Key: Eq + std::hash::Hash + Clone,
-        FnInit: AsyncFn(&Key, &Args) -> Comp + Clone,
+        Key: Eq + std::hash::Hash,
+        FnInit: AsyncFn(&Key, &Args) -> Comp,
     {
         let next_components_fut = keys.into_iter().map(|key| {
-            let init = self.init.clone();
+            let init = &self.init;
             let args = self.map.get(&key).map(|component| &component.args);
             async move {
                 let next = match args {
@@ -78,10 +78,10 @@ impl<Key, Args, Comp, FnInit> ComponentMap<Key, Args, Comp, FnInit> {
     ) -> impl Iterator<Item = Keyed<Key, Option<WithArgs<Args, Comp>>>>
     where
         Key: Clone + Eq + std::hash::Hash,
-        FnInit: AsyncFn(&Key, &Args) -> Comp + Clone,
+        FnInit: AsyncFn(&Key, &Args) -> Comp,
     {
         let updated_components_fut = updates.into_iter().map(|(key, args)| {
-            let init = self.init.clone();
+            let init = &self.init;
             async move {
                 let component = (init)(&key, &args).await;
                 (key, WithArgs { component, args })
@@ -317,5 +317,26 @@ mod tests {
         assert_eq!(manager.map.get("key1").unwrap().component, Counter(10));
         assert_eq!(manager.map.get("key2").unwrap().component, Counter(20));
         assert_eq!(manager.map.get("key3").unwrap().component, Counter(30));
+    }
+
+    #[tokio::test]
+    async fn test_init_need_not_be_clone() {
+        struct NotClone;
+        let not_clone = NotClone;
+        let init = move |_key: &&str, args: &Args| {
+            let _not_clone = &not_clone;
+            let value = args.value;
+            async move { Counter(value) }
+        };
+
+        let mut manager = ComponentMap::init_async([("key1", Args { value: 1 })], init).await;
+        manager.reinit_all_async().await.for_each(drop);
+        manager.reinit_async(["key1"]).await.for_each(drop);
+        manager
+            .update_async([("key1", Args { value: 2 })])
+            .await
+            .for_each(drop);
+
+        assert_eq!(manager.map.get("key1").unwrap().component, Counter(2));
     }
 }
