@@ -17,7 +17,7 @@ impl<Key, Args, Comp, FnInit> ComponentMap<Key, Args, Comp, FnInit> {
 
         let map = join_all(components_fut).await.into_iter().collect();
 
-        Self { map: map, init }
+        Self { map, init }
     }
 
     pub async fn reinit_all_async(&mut self) -> impl Iterator<Item = Keyed<&Key, Comp>>

@@ -14,7 +14,7 @@ impl<Key, Args, Comp, FnInit> ComponentMap<Key, Args, Comp, FnInit> {
             })
             .collect();
 
-        Self { map: map, init }
+        Self { map, init }
     }
 
     pub fn reinit_all(&mut self) -> impl Iterator<Item = Keyed<&Key, Comp>>

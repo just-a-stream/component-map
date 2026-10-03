@@ -17,7 +17,7 @@ impl<Key, Args, Comp, FnInit> ComponentMap<Key, Args, Comp, FnInit> {
             })
             .collect::<Result<_, _>>()?;
 
-        Ok(Self { map: map, init })
+        Ok(Self { map, init })
     }
 
     pub fn try_reinit_all<Error>(
@@ -544,7 +544,7 @@ mod tests {
 
         // Should not insert on error
         assert_eq!(manager.map.len(), 1);
-        assert!(manager.map.get("key2").is_none());
+        assert!(!manager.map.contains_key("key2"));
     }
 
     #[test]
@@ -599,8 +599,8 @@ mod tests {
 
         // Check that only successful updates were inserted
         assert_eq!(manager.map.len(), 3); // key1, key2, key4
-        assert!(manager.map.get("key2").is_some());
-        assert!(manager.map.get("key3").is_none());
-        assert!(manager.map.get("key4").is_some());
+        assert!(manager.map.contains_key("key2"));
+        assert!(!manager.map.contains_key("key3"));
+        assert!(manager.map.contains_key("key4"));
     }
 }
