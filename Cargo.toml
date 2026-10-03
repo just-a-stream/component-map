@@ -8,7 +8,7 @@ documentation = "https://docs.rs/component-map"
 repository = "https://github.com/just-a-stream/component-map"
 readme = "README.md"
 description = "Generic component manager with sync/async and fallible/infallible initialisation"
-keywords = ["component", "manager", "async", "initialiation"]
+keywords = ["component", "manager", "async", "initialisation"]
 categories = ["rust-patterns", "data-structures", "asynchronous"]
 
 [dev-dependencies]
