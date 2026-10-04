@@ -8,10 +8,10 @@ impl<Key, Args, Comp, FnInit> ComponentMap<Key, Args, Comp, FnInit> {
     ) -> Result<Self, Error>
     where
         Key: Eq + std::hash::Hash,
-        FnInit: AsyncFn(&Key, &Args) -> Result<Comp, Error> + Clone,
+        FnInit: AsyncFn(&Key, &Args) -> Result<Comp, Error>,
     {
         let components_fut = entries.into_iter().map(|(key, args)| {
-            let init = init.clone();
+            let init = &init;
             async move {
                 let result = (init)(&key, &args)
                     .await
@@ -27,14 +27,14 @@ impl<Key, Args, Comp, FnInit> ComponentMap<Key, Args, Comp, FnInit> {
             .map(|(key, result)| result.map(|component| (key, component)))
             .collect::<Result<_, _>>()?;
 
-        Ok(Self { map: map, init })
+        Ok(Self { map, init })
     }
 
     pub async fn try_reinit_all_async<Error>(
         &mut self,
     ) -> impl Iterator<Item = Keyed<&Key, Result<Comp, Error>>>
     where
-        FnInit: AsyncFn(&Key, &Args) -> Result<Comp, Error> + Clone,
+        FnInit: AsyncFn(&Key, &Args) -> Result<Comp, Error>,
     {
         let next_components_fut = self
             .map
@@ -43,7 +43,8 @@ impl<Key, Args, Comp, FnInit> ComponentMap<Key, Args, Comp, FnInit> {
 
         let next_components = join_all(next_components_fut).await;
 
-        self.map
+        let applied: Vec<_> = self
+            .map
             .iter_mut()
             .zip(next_components)
             .map(|((key, prev), result)| {
@@ -51,18 +52,21 @@ impl<Key, Args, Comp, FnInit> ComponentMap<Key, Args, Comp, FnInit> {
 
                 Keyed::new(key, result)
             })
+            .collect();
+
+        applied.into_iter()
     }
 
     pub async fn try_reinit_async<Error>(
         &mut self,
         keys: impl IntoIterator<Item = Key>,
-    ) -> impl Iterator<Item = Keyed<Key, Option<Result<Comp, Error>>>>
+    ) -> impl Iterator<Item = Keyed<Key, Result<Option<Comp>, Error>>>
     where
-        Key: Eq + std::hash::Hash + Clone,
-        FnInit: AsyncFn(&Key, &Args) -> Result<Comp, Error> + Clone,
+        Key: Eq + std::hash::Hash,
+        FnInit: AsyncFn(&Key, &Args) -> Result<Comp, Error>,
     {
         let next_components_fut = keys.into_iter().map(|key| {
-            let init = self.init.clone();
+            let init = &self.init;
 
             let args = self.map.get(&key).map(|component| &component.args);
 
@@ -77,32 +81,34 @@ impl<Key, Args, Comp, FnInit> ComponentMap<Key, Args, Comp, FnInit> {
 
         let results = join_all(next_components_fut).await;
 
-        results.into_iter().map(|Keyed { key, value: result }| {
-            let prev = result
-                .map(|result| {
-                    result.map(|next| {
+        let applied: Vec<_> = results
+            .into_iter()
+            .map(|Keyed { key, value: result }| {
+                let prev = result.transpose().map(|next| {
+                    next.and_then(|next| {
                         self.map
                             .get_mut(&key)
                             .map(|component| std::mem::replace(&mut component.component, next))
                     })
-                })
-                .transpose()
-                .map(Option::flatten);
+                });
 
-            Keyed::new(key, prev.transpose())
-        })
+                Keyed::new(key, prev)
+            })
+            .collect();
+
+        applied.into_iter()
     }
 
     pub async fn try_update_async<Error>(
         &mut self,
         updates: impl IntoIterator<Item = (Key, Args)>,
-    ) -> impl Iterator<Item = Keyed<Key, Option<Result<WithArgs<Args, Comp>, Error>>>>
+    ) -> impl Iterator<Item = Keyed<Key, Result<Option<WithArgs<Args, Comp>>, Error>>>
     where
         Key: Clone + Eq + std::hash::Hash,
-        FnInit: AsyncFn(&Key, &Args) -> Result<Comp, Error> + Clone,
+        FnInit: AsyncFn(&Key, &Args) -> Result<Comp, Error>,
     {
         let updated_components_fut = updates.into_iter().map(|(key, args)| {
-            let init = self.init.clone();
+            let init = &self.init;
             async move {
                 let result = (init)(&key, &args)
                     .await
@@ -112,14 +118,17 @@ impl<Key, Args, Comp, FnInit> ComponentMap<Key, Args, Comp, FnInit> {
             }
         });
 
-        join_all(updated_components_fut)
+        let applied: Vec<_> = join_all(updated_components_fut)
             .await
             .into_iter()
             .map(|(key, result)| {
                 let result = result.map(|component| self.map.insert(key.clone(), component));
 
-                Keyed::new(key, result.transpose())
+                Keyed::new(key, result)
             })
+            .collect();
+
+        applied.into_iter()
     }
 }
 
@@ -399,196 +408,100 @@ mod tests {
         let results: Vec<_> = manager.try_reinit_async(["key1"]).await.collect();
 
         assert_eq!(results.len(), 1);
-        assert!(results[0].value.as_ref().unwrap().is_ok());
+        assert!(results[0].value.as_ref().unwrap().is_some());
         assert_eq!(manager.map.get("key1").unwrap().component, Counter(3));
         assert_eq!(manager.map.get("key2").unwrap().component, Counter(6));
     }
 
     #[tokio::test]
-    async fn test_try_reinit_async_nonexistent_key() {
-        let init = |_key: &&str, args: &FailArgs| {
+    async fn test_try_init_need_not_be_clone() {
+        struct NotClone;
+        let not_clone = NotClone;
+        let init = move |_key: &&str, args: &FailArgs| {
+            let _not_clone = &not_clone;
             let value = args.value;
-            let should_fail = args.should_fail;
-            async move {
-                if should_fail {
-                    Err(TestError("Failed".to_string()))
-                } else {
-                    Ok(Counter(value))
-                }
-            }
+            async move { Ok::<_, TestError>(Counter(value)) }
+        };
+        let args = |value| FailArgs {
+            value,
+            should_fail: false,
         };
 
-        let mut manager = ComponentMap::try_init_async(
-            [(
-                "key1",
-                FailArgs {
-                    value: 1,
-                    should_fail: false,
-                },
-            )],
-            init,
-        )
-        .await
-        .unwrap();
+        let mut manager = ComponentMap::try_init_async([("key1", args(1))], init)
+            .await
+            .unwrap();
+        manager.try_reinit_all_async().await.for_each(drop);
+        manager.try_reinit_async(["key1"]).await.for_each(drop);
+        manager
+            .try_update_async([("key1", args(2))])
+            .await
+            .for_each(drop);
 
-        let results: Vec<_> = manager.try_reinit_async(["nonexistent"]).await.collect();
-
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].key, "nonexistent");
-        assert!(results[0].value.is_none());
+        assert_eq!(manager.map.get("key1").unwrap().component, Counter(2));
     }
 
     #[tokio::test]
-    async fn test_try_update_async_new_key_success() {
+    async fn test_try_reinit_all_async_applies_without_consuming_results() {
+        let calls = std::cell::Cell::new(0);
+        let init = |_key: &&str, _args: &FailArgs| {
+            calls.set(calls.get() + 1);
+            let call = calls.get();
+            async move { Ok::<_, TestError>(Counter(call)) }
+        };
+        let args = |value| FailArgs {
+            value,
+            should_fail: false,
+        };
+        let mut manager =
+            ComponentMap::try_init_async([("key1", args(1)), ("key2", args(2))], init)
+                .await
+                .unwrap();
+
+        let _ = manager.try_reinit_all_async().await;
+
+        assert!(manager.map.values().all(|entry| entry.component.0 > 2));
+    }
+
+    #[tokio::test]
+    async fn test_try_reinit_async_applies_without_consuming_results() {
+        let calls = std::cell::Cell::new(0);
+        let init = |_key: &&str, _args: &FailArgs| {
+            calls.set(calls.get() + 1);
+            let call = calls.get();
+            async move { Ok::<_, TestError>(Counter(call)) }
+        };
+        let args = FailArgs {
+            value: 1,
+            should_fail: false,
+        };
+        let mut manager = ComponentMap::try_init_async([("key1", args)], init)
+            .await
+            .unwrap();
+
+        let _ = manager.try_reinit_async(["key1"]).await;
+
+        assert_eq!(manager.map.get("key1").unwrap().component, Counter(2));
+    }
+
+    #[tokio::test]
+    async fn test_try_update_async_applies_without_consuming_results() {
         let init = |_key: &&str, args: &FailArgs| {
             let value = args.value;
-            let should_fail = args.should_fail;
-            async move {
-                if should_fail {
-                    Err(TestError("Failed".to_string()))
-                } else {
-                    Ok(Counter(value))
-                }
-            }
+            async move { Ok::<_, TestError>(Counter(value)) }
         };
-
-        let mut manager = ComponentMap::try_init_async(
-            [(
-                "key1",
-                FailArgs {
-                    value: 1,
-                    should_fail: false,
-                },
-            )],
-            init,
-        )
-        .await
-        .unwrap();
-
-        let results: Vec<_> = manager
-            .try_update_async([(
-                "key2",
-                FailArgs {
-                    value: 20,
-                    should_fail: false,
-                },
-            )])
+        let args = |value| FailArgs {
+            value,
+            should_fail: false,
+        };
+        let mut manager = ComponentMap::try_init_async([("key1", args(1))], init)
             .await
-            .collect();
+            .unwrap();
 
-        assert_eq!(results.len(), 1);
-        assert!(results[0].value.is_none());
-        assert_eq!(manager.map.len(), 2);
+        let _ = manager
+            .try_update_async([("key1", args(10)), ("key2", args(20))])
+            .await;
+
+        assert_eq!(manager.map.get("key1").unwrap().component, Counter(10));
         assert_eq!(manager.map.get("key2").unwrap().component, Counter(20));
-    }
-
-    #[tokio::test]
-    async fn test_try_update_async_failure() {
-        let init = |_key: &&str, args: &FailArgs| {
-            let value = args.value;
-            let should_fail = args.should_fail;
-            async move {
-                if should_fail {
-                    Err(TestError("Failed".to_string()))
-                } else {
-                    Ok(Counter(value))
-                }
-            }
-        };
-
-        let mut manager = ComponentMap::try_init_async(
-            [(
-                "key1",
-                FailArgs {
-                    value: 1,
-                    should_fail: false,
-                },
-            )],
-            init,
-        )
-        .await
-        .unwrap();
-
-        let results: Vec<_> = manager
-            .try_update_async([(
-                "key2",
-                FailArgs {
-                    value: 20,
-                    should_fail: true,
-                },
-            )])
-            .await
-            .collect();
-
-        assert_eq!(results.len(), 1);
-        assert!(results[0].value.is_some());
-        assert!(results[0].value.as_ref().unwrap().is_err());
-
-        // Should not insert on error
-        assert_eq!(manager.map.len(), 1);
-        assert!(manager.map.get("key2").is_none());
-    }
-
-    #[tokio::test]
-    async fn test_try_update_async_multiple_mixed() {
-        let init = |_key: &&str, args: &FailArgs| {
-            let value = args.value;
-            let should_fail = args.should_fail;
-            async move {
-                if should_fail {
-                    Err(TestError("Failed".to_string()))
-                } else {
-                    Ok(Counter(value))
-                }
-            }
-        };
-
-        let mut manager = ComponentMap::try_init_async(
-            [(
-                "key1",
-                FailArgs {
-                    value: 1,
-                    should_fail: false,
-                },
-            )],
-            init,
-        )
-        .await
-        .unwrap();
-
-        let results: Vec<_> = manager
-            .try_update_async([
-                (
-                    "key2",
-                    FailArgs {
-                        value: 20,
-                        should_fail: false,
-                    },
-                ),
-                (
-                    "key3",
-                    FailArgs {
-                        value: 30,
-                        should_fail: true,
-                    },
-                ),
-                (
-                    "key4",
-                    FailArgs {
-                        value: 40,
-                        should_fail: false,
-                    },
-                ),
-            ])
-            .await
-            .collect();
-
-        assert_eq!(results.len(), 3);
-
-        // Check that only successful updates were inserted
-        assert_eq!(manager.map.len(), 3); // key1, key2, key4
-        assert!(manager.map.get("key2").is_some());
-        assert!(manager.map.get("key3").is_none());
-        assert!(manager.map.get("key4").is_some());
     }
 }

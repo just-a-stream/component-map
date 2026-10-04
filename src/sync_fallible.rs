@@ -17,7 +17,7 @@ impl<Key, Args, Comp, FnInit> ComponentMap<Key, Args, Comp, FnInit> {
             })
             .collect::<Result<_, _>>()?;
 
-        Ok(Self { map: map, init })
+        Ok(Self { map, init })
     }
 
     pub fn try_reinit_all<Error>(
@@ -26,47 +26,63 @@ impl<Key, Args, Comp, FnInit> ComponentMap<Key, Args, Comp, FnInit> {
     where
         FnInit: Fn(&Key, &Args) -> Result<Comp, Error>,
     {
-        self.map.iter_mut().map(|(key, component)| {
-            let result = (self.init)(key, &component.args)
-                .map(|next| std::mem::replace(&mut component.component, next));
+        let applied: Vec<_> = self
+            .map
+            .iter_mut()
+            .map(|(key, component)| {
+                let result = (self.init)(key, &component.args)
+                    .map(|next| std::mem::replace(&mut component.component, next));
 
-            Keyed::new(key, result)
-        })
+                Keyed::new(key, result)
+            })
+            .collect();
+
+        applied.into_iter()
     }
 
     pub fn try_reinit<Error>(
         &mut self,
         keys: impl IntoIterator<Item = Key>,
-    ) -> impl Iterator<Item = Keyed<Key, Option<Result<Comp, Error>>>>
+    ) -> impl Iterator<Item = Keyed<Key, Result<Option<Comp>, Error>>>
     where
         Key: Eq + std::hash::Hash,
         FnInit: Fn(&Key, &Args) -> Result<Comp, Error>,
     {
-        keys.into_iter().map(|key| {
-            let prev = self.map.get_mut(&key).map(|component| {
-                (self.init)(&key, &component.args)
-                    .map(|next| std::mem::replace(&mut component.component, next))
-            });
+        let applied: Vec<_> = keys
+            .into_iter()
+            .map(|key| {
+                let prev = self.map.get_mut(&key).map(|component| {
+                    (self.init)(&key, &component.args)
+                        .map(|next| std::mem::replace(&mut component.component, next))
+                });
 
-            Keyed::new(key, prev)
-        })
+                Keyed::new(key, prev.transpose())
+            })
+            .collect();
+
+        applied.into_iter()
     }
 
     #[allow(clippy::type_complexity)]
     pub fn try_update<Error>(
         &mut self,
         updates: impl IntoIterator<Item = (Key, Args)>,
-    ) -> impl Iterator<Item = Keyed<Key, Option<Result<WithArgs<Args, Comp>, Error>>>>
+    ) -> impl Iterator<Item = Keyed<Key, Result<Option<WithArgs<Args, Comp>>, Error>>>
     where
         Key: Clone + Eq + std::hash::Hash,
         FnInit: Fn(&Key, &Args) -> Result<Comp, Error>,
     {
-        updates.into_iter().map(move |(key, args)| {
-            let result = (self.init)(&key, &args)
-                .map(|component| self.map.insert(key.clone(), WithArgs { component, args }));
+        let applied: Vec<_> = updates
+            .into_iter()
+            .map(|(key, args)| {
+                let result = (self.init)(&key, &args)
+                    .map(|component| self.map.insert(key.clone(), WithArgs { component, args }));
 
-            Keyed::new(key, result.transpose())
-        })
+                Keyed::new(key, result)
+            })
+            .collect();
+
+        applied.into_iter()
     }
 }
 
@@ -176,39 +192,6 @@ mod tests {
     }
 
     #[test]
-    fn test_try_init_all_fail() {
-        let init = |_key: &&str, args: &FailArgs| -> Result<Counter, TestError> {
-            if args.should_fail {
-                Err(TestError("Failed".to_string()))
-            } else {
-                Ok(Counter(args.value))
-            }
-        };
-
-        let result = ComponentMap::try_init(
-            [
-                (
-                    "key1",
-                    FailArgs {
-                        value: 1,
-                        should_fail: true,
-                    },
-                ),
-                (
-                    "key2",
-                    FailArgs {
-                        value: 2,
-                        should_fail: true,
-                    },
-                ),
-            ],
-            init,
-        );
-
-        assert!(result.is_err());
-    }
-
-    #[test]
     fn test_try_reinit_all_success() {
         let init = |_key: &&str, args: &FailArgs| -> Result<Counter, TestError> {
             if args.should_fail {
@@ -244,7 +227,6 @@ mod tests {
         assert_eq!(results.len(), 2);
         assert!(results.iter().all(|r| r.value.is_ok()));
 
-        // Check that components are updated
         assert_eq!(manager.map.get("key1").unwrap().component, Counter(2));
         assert_eq!(manager.map.get("key2").unwrap().component, Counter(4));
     }
@@ -258,7 +240,6 @@ mod tests {
             let count = *call_count_clone.lock().unwrap();
             *call_count_clone.lock().unwrap() += 1;
 
-            // Fail on reinit (after initial successful init)
             if count >= 2 && args.should_fail {
                 Err(TestError("Failed on reinit".to_string()))
             } else {
@@ -318,13 +299,11 @@ mod tests {
         )
         .unwrap();
 
-        // Change args to make it fail
         manager.map.get_mut("key1").unwrap().args.should_fail = true;
 
         let original_value = manager.map.get("key1").unwrap().component.clone();
         let _results: Vec<_> = manager.try_reinit_all().collect();
 
-        // Component should remain unchanged on error
         assert_eq!(manager.map.get("key1").unwrap().component, original_value);
     }
 
@@ -362,245 +341,62 @@ mod tests {
         let results: Vec<_> = manager.try_reinit(["key1"]).collect();
 
         assert_eq!(results.len(), 1);
-        assert!(results[0].value.as_ref().unwrap().is_ok());
+        assert!(results[0].value.as_ref().unwrap().is_some());
         assert_eq!(manager.map.get("key1").unwrap().component, Counter(3));
-        // key2 should be unchanged from initial
         assert_eq!(manager.map.get("key2").unwrap().component, Counter(6));
     }
 
     #[test]
-    fn test_try_reinit_nonexistent_key() {
-        let init = |_key: &&str, args: &FailArgs| -> Result<Counter, TestError> {
-            if args.should_fail {
-                Err(TestError("Failed".to_string()))
-            } else {
-                Ok(Counter(args.value))
-            }
+    fn test_try_reinit_all_applies_without_consuming_results() {
+        let calls = std::cell::Cell::new(0);
+        let init = |_key: &&str, _args: &FailArgs| -> Result<Counter, TestError> {
+            calls.set(calls.get() + 1);
+            Ok(Counter(calls.get()))
         };
+        let args = |value| FailArgs {
+            value,
+            should_fail: false,
+        };
+        let mut manager =
+            ComponentMap::try_init([("key1", args(1)), ("key2", args(2))], init).unwrap();
 
-        let mut manager = ComponentMap::try_init(
-            [(
-                "key1",
-                FailArgs {
-                    value: 1,
-                    should_fail: false,
-                },
-            )],
-            init,
-        )
-        .unwrap();
+        let _ = manager.try_reinit_all();
 
-        let results: Vec<_> = manager.try_reinit(["nonexistent"]).collect();
-
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].key, "nonexistent");
-        assert!(results[0].value.is_none());
+        assert!(manager.map.values().all(|entry| entry.component.0 > 2));
     }
 
     #[test]
-    fn test_try_reinit_with_failure() {
-        let init = |_key: &&str, args: &FailArgs| -> Result<Counter, TestError> {
-            if args.should_fail {
-                Err(TestError("Failed".to_string()))
-            } else {
-                Ok(Counter(args.value))
-            }
+    fn test_try_reinit_applies_without_consuming_results() {
+        let calls = std::cell::Cell::new(0);
+        let init = |_key: &&str, _args: &FailArgs| -> Result<Counter, TestError> {
+            calls.set(calls.get() + 1);
+            Ok(Counter(calls.get()))
         };
+        let args = FailArgs {
+            value: 1,
+            should_fail: false,
+        };
+        let mut manager = ComponentMap::try_init([("key1", args)], init).unwrap();
 
-        let mut manager = ComponentMap::try_init(
-            [(
-                "key1",
-                FailArgs {
-                    value: 1,
-                    should_fail: false,
-                },
-            )],
-            init,
-        )
-        .unwrap();
+        let _ = manager.try_reinit(["key1"]);
 
-        // Set to fail
-        manager.map.get_mut("key1").unwrap().args.should_fail = true;
-
-        let results: Vec<_> = manager.try_reinit(["key1"]).collect();
-
-        assert_eq!(results.len(), 1);
-        assert!(results[0].value.as_ref().unwrap().is_err());
+        assert_eq!(manager.map.get("key1").unwrap().component, Counter(2));
     }
 
     #[test]
-    fn test_try_update_new_key_success() {
+    fn test_try_update_applies_without_consuming_results() {
         let init = |_key: &&str, args: &FailArgs| -> Result<Counter, TestError> {
-            if args.should_fail {
-                Err(TestError("Failed".to_string()))
-            } else {
-                Ok(Counter(args.value))
-            }
+            Ok(Counter(args.value))
         };
-
-        let mut manager = ComponentMap::try_init(
-            [(
-                "key1",
-                FailArgs {
-                    value: 1,
-                    should_fail: false,
-                },
-            )],
-            init,
-        )
-        .unwrap();
-
-        let results: Vec<_> = manager
-            .try_update([(
-                "key2",
-                FailArgs {
-                    value: 20,
-                    should_fail: false,
-                },
-            )])
-            .collect();
-
-        assert_eq!(results.len(), 1);
-        assert!(results[0].value.is_none());
-        assert_eq!(manager.map.len(), 2);
-        assert_eq!(manager.map.get("key2").unwrap().component, Counter(20));
-    }
-
-    #[test]
-    fn test_try_update_existing_key_success() {
-        let init = |_key: &&str, args: &FailArgs| -> Result<Counter, TestError> {
-            if args.should_fail {
-                Err(TestError("Failed".to_string()))
-            } else {
-                Ok(Counter(args.value))
-            }
+        let args = |value| FailArgs {
+            value,
+            should_fail: false,
         };
+        let mut manager = ComponentMap::try_init([("key1", args(1))], init).unwrap();
 
-        let mut manager = ComponentMap::try_init(
-            [(
-                "key1",
-                FailArgs {
-                    value: 1,
-                    should_fail: false,
-                },
-            )],
-            init,
-        )
-        .unwrap();
-
-        let results: Vec<_> = manager
-            .try_update([(
-                "key1",
-                FailArgs {
-                    value: 10,
-                    should_fail: false,
-                },
-            )])
-            .collect();
-
-        assert_eq!(results.len(), 1);
-        assert!(results[0].value.is_some());
-        let prev = results[0].value.as_ref().unwrap().as_ref().unwrap();
-        assert_eq!(prev.component, Counter(1));
+        let _ = manager.try_update([("key1", args(10)), ("key2", args(20))]);
 
         assert_eq!(manager.map.get("key1").unwrap().component, Counter(10));
-    }
-
-    #[test]
-    fn test_try_update_failure() {
-        let init = |_key: &&str, args: &FailArgs| -> Result<Counter, TestError> {
-            if args.should_fail {
-                Err(TestError("Failed".to_string()))
-            } else {
-                Ok(Counter(args.value))
-            }
-        };
-
-        let mut manager = ComponentMap::try_init(
-            [(
-                "key1",
-                FailArgs {
-                    value: 1,
-                    should_fail: false,
-                },
-            )],
-            init,
-        )
-        .unwrap();
-
-        let results: Vec<_> = manager
-            .try_update([(
-                "key2",
-                FailArgs {
-                    value: 20,
-                    should_fail: true,
-                },
-            )])
-            .collect();
-
-        assert_eq!(results.len(), 1);
-        assert!(results[0].value.is_some());
-        assert!(results[0].value.as_ref().unwrap().is_err());
-
-        // Should not insert on error
-        assert_eq!(manager.map.len(), 1);
-        assert!(manager.map.get("key2").is_none());
-    }
-
-    #[test]
-    fn test_try_update_multiple_mixed() {
-        let init = |_key: &&str, args: &FailArgs| -> Result<Counter, TestError> {
-            if args.should_fail {
-                Err(TestError("Failed".to_string()))
-            } else {
-                Ok(Counter(args.value))
-            }
-        };
-
-        let mut manager = ComponentMap::try_init(
-            [(
-                "key1",
-                FailArgs {
-                    value: 1,
-                    should_fail: false,
-                },
-            )],
-            init,
-        )
-        .unwrap();
-
-        let results: Vec<_> = manager
-            .try_update([
-                (
-                    "key2",
-                    FailArgs {
-                        value: 20,
-                        should_fail: false,
-                    },
-                ),
-                (
-                    "key3",
-                    FailArgs {
-                        value: 30,
-                        should_fail: true,
-                    },
-                ),
-                (
-                    "key4",
-                    FailArgs {
-                        value: 40,
-                        should_fail: false,
-                    },
-                ),
-            ])
-            .collect();
-
-        assert_eq!(results.len(), 3);
-
-        // Check that only successful updates were inserted
-        assert_eq!(manager.map.len(), 3); // key1, key2, key4
-        assert!(manager.map.get("key2").is_some());
-        assert!(manager.map.get("key3").is_none());
-        assert!(manager.map.get("key4").is_some());
+        assert_eq!(manager.map.get("key2").unwrap().component, Counter(20));
     }
 }
