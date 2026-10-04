@@ -12,11 +12,12 @@ keywords = ["component", "manager", "async", "initialisation"]
 categories = ["rust-patterns", "data-structures", "asynchronous"]
 
 [dev-dependencies]
-tokio = { version = "1.49", features = ["rt", "macros"] }
+futures = { version = "0.3", default-features = false, features = ["executor"] }
+tokio = { version = "1.49", default-features = false, features = ["rt", "macros"] }
 
 [dependencies]
 # Async
-futures = { version = "0.3.31" }
+futures = { version = "0.3", default-features = false, features = ["alloc"] }
 
 # Util
-derive_more = { version = "2.1.1", default-features = false, features = ["constructor"]}
+derive_more = { version = "2.1", default-features = false, features = ["constructor"]}
