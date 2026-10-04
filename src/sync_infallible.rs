@@ -57,6 +57,16 @@ impl<Key, Args, Comp, FnInit> ComponentMap<Key, Args, Comp, FnInit> {
         applied.into_iter()
     }
 
+    pub fn update_one(&mut self, key: Key, args: Args) -> Option<WithArgs<Args, Comp>>
+    where
+        Key: Eq + std::hash::Hash,
+        FnInit: Fn(&Key, &Args) -> Comp,
+    {
+        let component = (self.init)(&key, &args);
+
+        self.map.insert(key, WithArgs { component, args })
+    }
+
     pub fn update(
         &mut self,
         updates: impl IntoIterator<Item = (Key, Args)>,

@@ -63,6 +63,20 @@ impl<Key, Args, Comp, FnInit> ComponentMap<Key, Args, Comp, FnInit> {
         applied.into_iter()
     }
 
+    pub fn try_update_one<Error>(
+        &mut self,
+        key: Key,
+        args: Args,
+    ) -> Result<Option<WithArgs<Args, Comp>>, Error>
+    where
+        Key: Eq + std::hash::Hash,
+        FnInit: Fn(&Key, &Args) -> Result<Comp, Error>,
+    {
+        let component = (self.init)(&key, &args)?;
+
+        Ok(self.map.insert(key, WithArgs { component, args }))
+    }
+
     #[allow(clippy::type_complexity)]
     pub fn try_update<Error>(
         &mut self,
