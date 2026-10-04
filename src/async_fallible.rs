@@ -99,6 +99,20 @@ impl<Key, Args, Comp, FnInit> ComponentMap<Key, Args, Comp, FnInit> {
         applied.into_iter()
     }
 
+    pub async fn try_update_one_async<Error>(
+        &mut self,
+        key: Key,
+        args: Args,
+    ) -> Result<Option<WithArgs<Args, Comp>>, Error>
+    where
+        Key: Eq + std::hash::Hash,
+        FnInit: AsyncFn(&Key, &Args) -> Result<Comp, Error>,
+    {
+        let component = (self.init)(&key, &args).await?;
+
+        Ok(self.map.insert(key, WithArgs { component, args }))
+    }
+
     pub async fn try_update_async<Error>(
         &mut self,
         updates: impl IntoIterator<Item = (Key, Args)>,
